@@ -1,3 +1,15 @@
+/** Mirrors PHP {@see \Tjseabury\WoprIslands\Component::reactiveSchema()} */
+export type ReactiveFieldSchema = {
+  wire: string;
+  debounceMs: number | null;
+  defer: boolean;
+};
+
+/** Mirrors PHP {@see \Tjseabury\WoprIslands\Component::actionSchema()} */
+export type ActionFieldSchema = {
+  wire: string;
+};
+
 export type IslandInitData = {
   slug: string;
   instanceId: string;
@@ -5,6 +17,9 @@ export type IslandInitData = {
   snapshot: string;
   restNamespace: string;
   restEndpointBaseUrl: string;
+  /** When present, use for automatic input binding / debounce (Livewire-style). */
+  reactiveSchema?: ReactiveFieldSchema[];
+  actionSchema?: ActionFieldSchema[];
 };
 
 export type CreateClientOptions = {

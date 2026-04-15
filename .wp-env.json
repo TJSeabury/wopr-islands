@@ -1,0 +1,12 @@
+{
+  "phpVersion": "8.2",
+  "plugins": ["./dev/stub-plugin"],
+  "mappings": {
+    "wopr-islands-package": "."
+  },
+  "config": {
+    "WP_DEBUG": true,
+    "WP_DEBUG_LOG": true,
+    "SCRIPT_DEBUG": true
+  }
+}

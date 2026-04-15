@@ -39,13 +39,17 @@ final class RenderedComponent
      */
     public function getInitData(): array
     {
+        $component = $this->component;
+
         return [
             'slug' => $this->slug,
             'instanceId' => $this->instanceId,
-            'initialState' => $this->component->getReactiveState(),
+            'initialState' => $component->getReactiveState(),
             'snapshot' => $this->snapshot,
             'restNamespace' => WoprIslands::REST_NAMESPACE,
             'restEndpointBaseUrl' => WoprIslands::restEndpointBaseUrl(),
+            'reactiveSchema' => $component::reactiveSchema(),
+            'actionSchema' => $component::actionSchema(),
         ];
     }
 
