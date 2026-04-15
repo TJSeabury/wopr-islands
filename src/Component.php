@@ -8,6 +8,7 @@ use ReflectionClass;
 use ReflectionMethod;
 use ReflectionProperty;
 use Tjseabury\WoprIslands\Attributes\Action;
+use Tjseabury\WoprIslands\Attributes\Authorize;
 use Tjseabury\WoprIslands\Attributes\ComponentSlug;
 use Tjseabury\WoprIslands\Attributes\Reactive;
 
@@ -228,6 +229,28 @@ abstract class Component
         }
 
         return $methods;
+    }
+
+    /**
+     * WordPress capabilities required for this action wire (from stacked {@see Authorize} attributes).
+     *
+     * @return list<non-empty-string>
+     */
+    public static function authorizeCapabilitiesForActionWire(string $wire): array
+    {
+        $methods = static::actionMethods();
+        if (!isset($methods[$wire])) {
+            return [];
+        }
+
+        $caps = [];
+        foreach ($methods[$wire]->getAttributes(Authorize::class) as $attr) {
+            /** @var Authorize $auth */
+            $auth = $attr->newInstance();
+            $caps[] = $auth->capability;
+        }
+
+        return $caps;
     }
 
     /**

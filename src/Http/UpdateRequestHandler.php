@@ -99,6 +99,12 @@ final class UpdateRequestHandler
                 $args = [];
             }
 
+            /** @var class-string<Component> $class */
+            $authError = self::authorizeAction($class, $name);
+            if ($authError instanceof WP_Error) {
+                return $authError;
+            }
+
             try {
                 $instance->callAction($name, array_values($args));
             } catch (\InvalidArgumentException $e) {
@@ -120,5 +126,32 @@ final class UpdateRequestHandler
             'state' => $newState,
             'snapshot' => $newSnapshot,
         ], 200);
+    }
+
+    /**
+     * @param class-string<Component> $componentClass
+     */
+    private static function authorizeAction(string $componentClass, string $actionWire): true|WP_Error
+    {
+        $caps = $componentClass::authorizeCapabilitiesForActionWire($actionWire);
+        if ($caps === []) {
+            return true;
+        }
+
+        if (!function_exists('current_user_can')) {
+            return new WP_Error('wopr_no_wp', 'WordPress capabilities are not available.', ['status' => 500]);
+        }
+
+        foreach ($caps as $cap) {
+            if (!current_user_can($cap)) {
+                return new WP_Error(
+                    'wopr_forbidden',
+                    sprintf('You do not have permission to perform this action (requires "%s").', $cap),
+                    ['status' => 403]
+                );
+            }
+        }
+
+        return true;
     }
 }

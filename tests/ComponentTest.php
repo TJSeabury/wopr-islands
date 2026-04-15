@@ -6,6 +6,7 @@ namespace Tjseabury\WoprIslands\Tests;
 
 use PHPUnit\Framework\TestCase;
 use Tjseabury\WoprIslands\Attributes\Action;
+use Tjseabury\WoprIslands\Attributes\Authorize;
 use Tjseabury\WoprIslands\Attributes\ComponentSlug;
 use Tjseabury\WoprIslands\Attributes\Reactive;
 use Tjseabury\WoprIslands\Component;
@@ -94,6 +95,12 @@ final class ComponentTest extends TestCase
         $this->assertSame([['wire' => 'ping']], $init['actionSchema']);
         $this->assertSame(['value' => 3], $init['initialState']);
     }
+
+    public function testAuthorizeCapabilitiesForActionWire(): void
+    {
+        $this->assertSame(['manage_options', 'edit_posts'], AuthMetadataIsland::authorizeCapabilitiesForActionWire('adminOnly'));
+        $this->assertSame([], AuthMetadataIsland::authorizeCapabilitiesForActionWire('unknown'));
+    }
 }
 
 #[ComponentSlug('schema-island')]
@@ -110,5 +117,24 @@ final class SchemaIsland extends Component
     public function render(): string
     {
         return (string) $this->value;
+    }
+}
+
+#[ComponentSlug('auth-metadata-island')]
+final class AuthMetadataIsland extends Component
+{
+    #[Reactive]
+    public int $x = 0;
+
+    #[Action(name: 'adminOnly')]
+    #[Authorize('manage_options')]
+    #[Authorize('edit_posts')]
+    public function secret(): void
+    {
+    }
+
+    public function render(): string
+    {
+        return '';
     }
 }
