@@ -49,6 +49,11 @@ export type UpdateResult = {
   snapshot: string;
 };
 
+type WindowWithWoprIslands = Window & {
+  __WOPR_ISLANDS_INIT?: IslandInitData[];
+  __WOPR_ISLANDS_NONCE?: string | null;
+};
+
 export function createComponentClient(
   slug: string,
   instanceId: string,
@@ -86,6 +91,14 @@ export function createComponentClient(
       headers['X-WP-Nonce'] = options.nonce;
     }
 
+    if (typeof console !== 'undefined') {
+      console.log('[WoprIslands] request', {
+        url,
+        body,
+        hasWpNonce: Boolean(options.nonce),
+      });
+    }
+
     const res = await fetch(url, {
       method: 'POST',
       credentials: 'same-origin',
@@ -98,6 +111,9 @@ export function createComponentClient(
 
     if (!res.ok) {
       const text = await res.text().catch(() => '');
+      if (typeof console !== 'undefined') {
+        console.log('[WoprIslands] request failed', { status: res.status, text });
+      }
       throw new Error(`WOPR Islands update failed (${res.status}): ${text || res.statusText}`);
     }
 
@@ -109,6 +125,10 @@ export function createComponentClient(
     state = data.state as Record<string, unknown>;
     snapshot = data.snapshot;
     emitAll();
+
+    if (typeof console !== 'undefined') {
+      console.log('[WoprIslands] request ok', { state, snapshot: '[omitted]' });
+    }
 
     return data;
   };
@@ -158,4 +178,141 @@ export function createComponentClientFromInit(
     restEndpointBaseUrl: init.restEndpointBaseUrl,
     nonce: extra?.nonce,
   });
+}
+
+export type AttachIslandOptions = {
+  /** Optional root to query within. Defaults to document. */
+  root?: ParentNode;
+  /** Override nonce (otherwise reads window.__WOPR_ISLANDS_NONCE). */
+  nonce?: string | null;
+};
+
+function queryOne(sel: string, root?: ParentNode): Element | null {
+  return (root ?? document).querySelector(sel);
+}
+
+function queryAll(sel: string, root?: ParentNode): Element[] {
+  return Array.prototype.slice.call((root ?? document).querySelectorAll(sel));
+}
+
+/**
+ * Attaches DOM bindings for one island init payload.
+ *
+ * - Updates `[data-wopr-bind="key"]` nodes when the server returns new state.
+ * - Wires `[data-wopr-action]` buttons to server actions.
+ */
+export function attachIsland(init: IslandInitData, options?: AttachIslandOptions): void {
+  const root = options?.root ?? document;
+  const win = window as WindowWithWoprIslands;
+  const nonce = options?.nonce ?? win.__WOPR_ISLANDS_NONCE ?? null;
+
+  const el = queryOne(
+    `[data-wopr-island="${CSS.escape(init.slug)}"][data-wopr-instance="${CSS.escape(init.instanceId)}"]`,
+    root
+  );
+  if (!el) {
+    return;
+  }
+
+  const client = createComponentClientFromInit(init, { nonce: nonce ?? undefined });
+
+  const reactiveKeys =
+    Array.isArray(init.reactiveSchema) && init.reactiveSchema.length
+      ? init.reactiveSchema.map((f) => f.wire).filter(Boolean)
+      : Object.keys(client.getState());
+
+  const renderKey = (key: string, value: unknown): void => {
+    const nodes = queryAll(`[data-wopr-bind="${CSS.escape(key)}"]`, el);
+    for (const node of nodes) {
+      (node as HTMLElement).textContent = value == null ? '' : String(value);
+    }
+  };
+
+  for (const key of reactiveKeys) {
+    client.on(key, (value) => renderKey(key, value));
+  }
+
+  // Initial render.
+  const state = client.getState();
+  for (const key of reactiveKeys) {
+    renderKey(key, state[key]);
+  }
+
+  // Action wiring.
+  let updating = false;
+  queryAll('[data-wopr-action]', el).forEach((btn) => {
+    btn.addEventListener('click', async () => {
+      if (updating) {
+        return;
+      }
+      updating = true;
+      const name = btn.getAttribute('data-wopr-action') || '';
+      try {
+        const rawArgs = btn.getAttribute('data-wopr-action-args');
+        let args: unknown[] = [];
+        if (rawArgs && rawArgs.trim() !== '') {
+          try {
+            const parsed = JSON.parse(rawArgs);
+            if (Array.isArray(parsed)) {
+              args = parsed;
+            }
+          } catch {
+            // Ignore invalid args attribute.
+          }
+        }
+
+        await client.call(name, ...args);
+      } finally {
+        updating = false;
+      }
+    });
+  });
+
+  // Special case (dev stub): ViewCounter auto-increments once per rendered instance.
+  // Uses a one-time nonce provided in state and cleared server-side after a successful call.
+  if (init.slug === 'view-counter') {
+    const st = client.getState() as Record<string, unknown>;
+    const viewNonce = typeof st.viewNonce === 'string' ? st.viewNonce : '';
+    const already = (el as HTMLElement).dataset.woprViewIncremented === '1';
+
+    if (viewNonce && !already) {
+      (el as HTMLElement).dataset.woprViewIncremented = '1';
+      if (typeof console !== 'undefined') {
+        console.log('[WoprIslands] view-counter: calling increment', {
+          instanceId: init.instanceId,
+          postId: st.postId,
+          hasViewNonce: true,
+        });
+      }
+      void client.call('increment', viewNonce).catch((err) => {
+        if (typeof console !== 'undefined') {
+          console.log('[WoprIslands] view-counter: increment failed', err);
+        }
+      });
+    }
+  }
+}
+
+/**
+ * Attaches all islands described by `window.__WOPR_ISLANDS_INIT`.
+ * Safe to call multiple times (it will re-attach handlers if you do).
+ */
+export function attachIslandsFromWindow(options?: AttachIslandOptions): void {
+  const win = window as WindowWithWoprIslands;
+  const inits = Array.isArray(win.__WOPR_ISLANDS_INIT) ? win.__WOPR_ISLANDS_INIT : [];
+  for (let i = 0; i < inits.length; i++) {
+    const init = inits[i];
+    if (init && init.slug && init.instanceId) {
+      attachIsland(init, options);
+    }
+  }
+}
+
+// Default behavior for the distributed bundle: auto-attach on DOM ready.
+if (typeof window !== 'undefined' && typeof document !== 'undefined') {
+  if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', () => attachIslandsFromWindow());
+  } else {
+    attachIslandsFromWindow();
+  }
 }

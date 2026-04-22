@@ -12,16 +12,31 @@ use WP_REST_Request;
 use WP_REST_Response;
 final class UpdateRequestHandler
 {
+    private static function debugLog(string $message, array $context = []): void
+    {
+        $line = '[wopr-islands] ' . $message;
+        if ($context !== []) {
+            try {
+                $line .= ' ' . json_encode($context, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE);
+            } catch (\Throwable) {
+                // Ignore JSON failures in debug output.
+            }
+        }
+
+        if (function_exists('error_log')) {
+            error_log($line);
+        }
+    }
+
     public static function permission(): bool|WP_Error
     {
-        if (!function_exists('is_user_logged_in')) {
+        if (!function_exists('add_action')) {
             return new WP_Error('wopr_no_wp', 'WordPress is not loaded.', ['status' => 500]);
         }
 
-        if (!is_user_logged_in()) {
-            return new WP_Error('wopr_forbidden', 'Authentication required.', ['status' => 401]);
-        }
-
+        // This endpoint is designed to work for both authenticated and anonymous visitors.
+        // Sensitive actions should be protected using component-level authorization attributes
+        // (capabilities) and/or action-specific verification inside the component method.
         return true;
     }
 
@@ -31,12 +46,21 @@ final class UpdateRequestHandler
         $instanceId = (string) $request['instance_id'];
         $params = $request->get_json_params();
 
+        self::debugLog('handle: incoming', [
+            'slug' => $slug,
+            'instanceId' => $instanceId,
+            'hasParams' => is_array($params),
+            'hasNonceHeader' => (string) $request->get_header('X-WP-Nonce') !== '',
+        ]);
+
         if (!is_array($params)) {
+            self::debugLog('handle: invalid json body', []);
             return new WP_Error('wopr_invalid_json', 'Expected JSON body.', ['status' => 400]);
         }
 
         $snapshotToken = $params['snapshot'] ?? null;
         if (!is_string($snapshotToken) || $snapshotToken === '') {
+            self::debugLog('handle: missing snapshot', []);
             return new WP_Error('wopr_missing_snapshot', 'Missing snapshot.', ['status' => 400]);
         }
 
@@ -45,23 +69,36 @@ final class UpdateRequestHandler
             $patch = [];
         }
         if (!is_array($patch)) {
+            self::debugLog('handle: invalid patch', ['patchType' => gettype($patch)]);
             return new WP_Error('wopr_invalid_patch', 'Patch must be an object.', ['status' => 400]);
         }
 
         $action = $params['action'] ?? null;
+        if (is_array($action)) {
+            self::debugLog('handle: action provided', [
+                'name' => isset($action['name']) ? $action['name'] : null,
+                'argsType' => isset($action['args']) ? gettype($action['args']) : null,
+            ]);
+        }
 
         try {
             $signer = WoprIslands::signer();
             $payload = $signer->parseToken($snapshotToken);
         } catch (SnapshotException $e) {
+            self::debugLog('handle: bad snapshot', ['error' => $e->getMessage()]);
             return new WP_Error('wopr_bad_snapshot', $e->getMessage(), ['status' => 403]);
         }
 
         if (($payload['v'] ?? null) !== 1) {
+            self::debugLog('handle: unsupported snapshot version', ['v' => $payload['v'] ?? null]);
             return new WP_Error('wopr_bad_snapshot', 'Unsupported snapshot version.', ['status' => 400]);
         }
 
         if (($payload['slug'] ?? '') !== $slug || ($payload['instanceId'] ?? '') !== $instanceId) {
+            self::debugLog('handle: snapshot route mismatch', [
+                'payloadSlug' => $payload['slug'] ?? null,
+                'payloadInstanceId' => $payload['instanceId'] ?? null,
+            ]);
             return new WP_Error('wopr_mismatch', 'Snapshot does not match route.', ['status' => 400]);
         }
 
@@ -69,6 +106,10 @@ final class UpdateRequestHandler
         $payloadClass = $payload['class'] ?? null;
 
         if ($class === null || !is_string($payloadClass) || $payloadClass !== $class) {
+            self::debugLog('handle: class mismatch', [
+                'registryClass' => $class,
+                'payloadClass' => $payloadClass,
+            ]);
             return new WP_Error('wopr_bad_class', 'Unknown or mismatched component class.', ['status' => 400]);
         }
 
@@ -80,11 +121,13 @@ final class UpdateRequestHandler
         /** @var Component $instance */
         $instance = new $class();
         $instance->hydrate($state);
+        self::debugLog('handle: hydrated', ['class' => $class]);
 
         if ($patch !== []) {
             try {
                 $instance->applyPatch($patch);
             } catch (\InvalidArgumentException $e) {
+                self::debugLog('handle: invalid patch keys', ['error' => $e->getMessage()]);
                 return new WP_Error('wopr_invalid_patch', $e->getMessage(), ['status' => 400]);
             }
         }
@@ -93,6 +136,7 @@ final class UpdateRequestHandler
             $name = $action['name'];
             $args = $action['args'] ?? [];
             if ($args !== null && !is_array($args)) {
+                self::debugLog('handle: invalid action args', ['argsType' => gettype($args)]);
                 return new WP_Error('wopr_invalid_action', 'Action args must be an array.', ['status' => 400]);
             }
             if (!is_array($args)) {
@@ -102,17 +146,21 @@ final class UpdateRequestHandler
             /** @var class-string<Component> $class */
             $authError = self::authorizeAction($class, $name);
             if ($authError instanceof WP_Error) {
+                self::debugLog('handle: action forbidden', ['name' => $name, 'error' => $authError->get_error_message()]);
                 return $authError;
             }
 
             try {
+                self::debugLog('handle: calling action', ['name' => $name, 'argsCount' => count($args)]);
                 $instance->callAction($name, array_values($args));
             } catch (\InvalidArgumentException $e) {
+                self::debugLog('handle: invalid action', ['error' => $e->getMessage()]);
                 return new WP_Error('wopr_invalid_action', $e->getMessage(), ['status' => 400]);
             }
         }
 
         $newState = $instance->getReactiveState();
+        self::debugLog('handle: returning', ['stateKeys' => array_keys($newState)]);
         $newPayload = [
             'v' => 1,
             'slug' => $slug,

@@ -2,12 +2,16 @@
   "name": "wopr-islands",
   "private": true,
   "scripts": {
+    "build": "npm run build:js",
+    "build:js": "node js/build.mjs",
     "wp-env": "wp-env",
     "wp:start": "wp-env start",
     "wp:stop": "wp-env stop",
     "wp:destroy": "wp-env destroy"
   },
   "devDependencies": {
-    "@wordpress/env": "^10.17.0"
+    "@wordpress/env": "^10.17.0",
+    "esbuild": "^0.28.0",
+    "typescript": "^6.0.3"
   }
 }

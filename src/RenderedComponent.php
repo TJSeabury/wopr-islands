@@ -6,6 +6,13 @@ namespace Tjseabury\WoprIslands;
 
 final class RenderedComponent
 {
+    /**
+     * Init payloads queued for output at `wp_footer`.
+     *
+     * @var list<array<string, mixed>>
+     */
+    private static array $queuedInitData = [];
+
     public function __construct(
         private readonly Component $component,
         private readonly string $slug,
@@ -53,8 +60,43 @@ final class RenderedComponent
         ];
     }
 
+    /**
+     * Queue this island's init payload for later output (WordPress integration).
+     */
+    public function queueInit(): void
+    {
+        self::$queuedInitData[] = $this->getInitData();
+    }
+
+    /**
+     * Outputs any queued init payloads as inline scripts pushing into `window.__WOPR_ISLANDS_INIT`.
+     *
+     * Safe to call multiple times; it flushes the queue.
+     */
+    public static function flushQueuedInitScripts(): void
+    {
+        if (self::$queuedInitData === []) {
+            return;
+        }
+
+        $queued = self::$queuedInitData;
+        self::$queuedInitData = [];
+
+        foreach ($queued as $init) {
+            $json = json_encode($init, JSON_HEX_TAG | JSON_HEX_AMP | JSON_HEX_APOS | JSON_HEX_QUOT | JSON_THROW_ON_ERROR);
+            echo '<script>(function(){window.__WOPR_ISLANDS_INIT=window.__WOPR_ISLANDS_INIT||[];window.__WOPR_ISLANDS_INIT.push('
+                . $json . ');})();</script>';
+        }
+    }
+
     public function toHtml(): string
     {
+        // WordPress convenience: queue init payloads and print them at `wp_footer`.
+        // Outside of WP, callers can still manually use inlineInitScript() if desired.
+        if (function_exists('add_action')) {
+            $this->queueInit();
+        }
+
         $html = $this->component->render();
 
         $attrs = sprintf(

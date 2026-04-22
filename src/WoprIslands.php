@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace Tjseabury\WoprIslands;
 
 use Tjseabury\WoprIslands\Snapshot\SnapshotSigner;
+use Tjseabury\WoprIslands\RenderedComponent;
 
 final class WoprIslands
 {
@@ -31,6 +32,9 @@ final class WoprIslands
 
     if (function_exists('add_action')) {
       add_action('rest_api_init', [Http\RouteRegistrar::class, 'register'], 10, 0);
+
+      // WordPress integration: print queued init payloads late in the page.
+      add_action('wp_footer', [RenderedComponent::class, 'flushQueuedInitScripts'], 5, 0);
     }
   }
 
@@ -80,5 +84,45 @@ final class WoprIslands
     }
 
     return rtrim('/wp-json/' . self::REST_NAMESPACE, '/');
+  }
+
+  /**
+   * Enqueue the WOPR Islands browser bundle and (optionally) inject a REST nonce.
+   *
+   * This is a convenience for WordPress integrations. It is a no-op outside WP.
+   *
+   * @param array{
+   *   handle?: string,
+   *   deps?: list<string>,
+   *   version?: string|null,
+   *   in_footer?: bool,
+   *   nonce?: string|null
+   * } $args
+   */
+  public static function enqueueClientScript(string $src, array $args = []): void
+  {
+    if (!function_exists('wp_enqueue_script')) {
+      return;
+    }
+
+    $handle = is_string($args['handle'] ?? null) ? (string) $args['handle'] : 'wopr-islands';
+    $deps = is_array($args['deps'] ?? null) ? $args['deps'] : [];
+    $version = array_key_exists('version', $args) ? (is_string($args['version']) ? $args['version'] : null) : null;
+    $inFooter = array_key_exists('in_footer', $args) ? (bool) $args['in_footer'] : true;
+
+    wp_enqueue_script($handle, $src, $deps, $version, $inFooter);
+
+    if (!function_exists('wp_add_inline_script') || !function_exists('wp_json_encode')) {
+      return;
+    }
+
+    $nonce = $args['nonce'] ?? null;
+    if ($nonce === null && function_exists('wp_create_nonce')) {
+      $nonce = wp_create_nonce('wp_rest');
+    }
+
+    if (is_string($nonce) && $nonce !== '') {
+      wp_add_inline_script($handle, 'window.__WOPR_ISLANDS_NONCE=' . wp_json_encode($nonce) . ';', 'before');
+    }
   }
 }
